@@ -60,9 +60,10 @@ def init_database():
 def fetch_score_data(search_query="", grade_filter="전체"):
     """
     데이터베이스에서 학생 성적 정보를 조회해 옵니다.
-    실시간으로 총점, 평균, 학점을 계산하여 Pandas DataFrame으로 반환합니다.
+    실시간으로 총점, 평균, 석차, 학점을 계산하여 Pandas DataFrame으로 반환합니다.
     """
     with get_db_connection() as conn:
+        # 전체 학생 데이터를 기준으로 석차를 산출하기 위해 먼저 전체를 불러옵니다.
         query = "SELECT * FROM score WHERE 1=1"
         params = []
         
@@ -75,9 +76,13 @@ def fetch_score_data(search_query="", grade_filter="전체"):
     if df.empty:
         return df
 
-    # 총점, 평균 계산 수행
+    # 총점 및 평균 계산 수행
     df['총점'] = df['korean'] + df['english'] + df['computer']
     df['평균'] = (df['총점'] / 3.0).round(2)
+    
+    # [석차 계산]: 평균 점수를 기준으로 내림차순(점수가 높을수록 1등) 순위를 구합니다.
+    # 동점자가 있을 경우 공동 순위(min 방식)로 처리합니다 (예: 공동 2등이 2명이면 다음 등수는 4등).
+    df['석차'] = df['평균'].rank(ascending=False, method='min').astype(int)
     
     # 학점 산출 로직 정의
     def calculate_grade(avg):
@@ -98,9 +103,16 @@ def fetch_score_data(search_query="", grade_filter="전체"):
         'computer': '컴퓨터'
     })
     
-    # 학점 필터 처리
+    # 컬럼 배치 순서 재조정 (학번, 이름 바로 옆에 석차를 배치하여 가시성을 확보합니다)
+    column_order = ['학번', '이름', '석차', '국어', '영어', '컴퓨터', '총점', '평균', '학점']
+    df = df[column_order]
+    
+    # 학점 필터 처리 (필터링되더라도 개별 학생의 전체 석차는 그대로 보존됩니다)
     if grade_filter != "전체":
         df = df[df['학점'] == grade_filter]
+        
+    # 기본 정렬 기준을 석차 순(오름차순)으로 지정하여 1등부터 보기 쉽게 나열합니다.
+    df = df.sort_values(by='석차')
         
     return df
 
@@ -231,14 +243,14 @@ else:
     # 4단계: 성적 테이블 시각화
     st.subheader("📋 성적 상세 현황판")
     
-    # 기존 Pandas Styler 변환을 우회하고 raw DataFrame을 직접 주입함으로써 
-    # Streamlit 내장 Interactive progress-bar 및 정밀한 포맷팅 옵션과의 호환성 충돌 문제를 원천 해결합니다.
     st.dataframe(
         df_score,
         use_container_width=True,
         hide_index=True,
         column_config={
             "학번": st.column_config.NumberColumn(format="%d"),
+            "이름": st.column_config.TextColumn(),
+            "석차": st.column_config.NumberColumn(format="%d등"),  # 석차 포맷팅 추가
             "국어": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%d"),
             "영어": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%d"),
             "컴퓨터": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%d"),
